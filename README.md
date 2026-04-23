@@ -7,7 +7,7 @@
 
 Access OpenAI models via an existing Codex subscription
 
-Apparently [this is OK](https://twitter.com/steipete/status/2046775849769148838)!
+Apparently [this is OK](https://twitter.com/romainhuet/status/2038699202834841962)! There's more background [on my blog](https://simonwillison.net/2026/Apr/23/gpt-5-5/).
 
 ## Installation
 
