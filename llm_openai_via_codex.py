@@ -84,6 +84,12 @@ def _auth_path():
 def _read_auth(path):
     with open(path) as f:
         data = json.load(f)
+
+    if "auth_mode" not in data:
+        raise BorrowKeyError(
+            "No auth_mode key found in auth.json. Run `codex login` to re-authenticate."
+        )
+
     if data.get("auth_mode") != "chatgpt":
         raise BorrowKeyError(
             f"Expected auth_mode 'chatgpt', got '{data.get('auth_mode')}'. "
