@@ -184,11 +184,10 @@ def _fetch_codex_models():
     try:
         with urllib.request.urlopen(req) as resp:
             data = json.loads(resp.read())
-        return [
-            m["slug"]
-            for m in data.get("models", [])
-            if m.get("supported_in_api") and m.get("visibility") == "list"
-        ]
+        # `visibility` is a Codex app presentation hint, not an API capability:
+        # `supported_in_api` already says whether a model can be requested.
+        # Filtering on visibility hides usable models, notably `gpt-reserve`.
+        return [m["slug"] for m in data.get("models", []) if m.get("supported_in_api")]
     except Exception:
         return DEFAULT_MODELS
 

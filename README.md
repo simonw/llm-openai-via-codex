@@ -29,6 +29,28 @@ To run a prompt against one of those models:
 llm -m openai-codex/gpt-5.5 'Generate an SVG of a pelican riding a bicycle'
 ```
 
+### Luna Reserve
+
+Some Codex subscriptions include a Luna Reserve: a second allowance on its own
+meter that stays usable after the regular one is spent. It is reached through
+the `gpt-reserve` model, not `gpt-5.6-luna` - that is the model the Reserve
+presents as, but requesting it bills the regular allowance.
+
+```bash
+llm -m openai-codex/gpt-reserve 'Talk to me in Swedish'
+```
+
+To keep using your usual model and only drop to the Reserve once the regular
+allowance runs out, pass `fallback_to_reserve`:
+
+```bash
+llm -m openai-codex/gpt-5.5 -o fallback_to_reserve 1 'Talk to me in Swedish'
+```
+
+The retry happens only for a `usage_limit_reached` error, only once, and never
+after any output has already been streamed. Accounts without a Luna Reserve
+will see the original error unchanged.
+
 ## Development
 
 To set up this plugin locally, first checkout the code. Run the tests using `uv`:

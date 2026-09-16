@@ -84,3 +84,34 @@ def test_fetch_codex_models_fallback():
     ):
         models = _fetch_codex_models()
     assert models == DEFAULT_MODELS
+
+
+def _catalog(*models):
+    payload = json.dumps({"models": list(models)}).encode("utf-8")
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return payload
+
+    return _Response()
+
+
+def test_api_supported_models_are_registered_regardless_of_visibility():
+    # `visibility` is an app presentation hint; `supported_in_api` decides
+    # whether a model can actually be requested. gpt-reserve is marked hidden
+    # but is a normal, usable model.
+    catalog = _catalog(
+        {"slug": "gpt-5.4", "supported_in_api": True, "visibility": "list"},
+        {"slug": "gpt-reserve", "supported_in_api": True, "visibility": "hide"},
+        {"slug": "not-in-api", "supported_in_api": False, "visibility": "list"},
+    )
+    with patch("llm_openai_via_codex.borrow_codex_key", return_value=("t", None)):
+        with patch("urllib.request.urlopen", return_value=catalog):
+            models = _fetch_codex_models()
+    assert models == ["gpt-5.4", "gpt-reserve"]
