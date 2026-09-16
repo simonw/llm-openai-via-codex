@@ -155,11 +155,34 @@ def _refresh(refresh_token):
 
 # --- Fetch available models from the Codex endpoint ---
 
+#: The Luna Reserve is a second allowance on its own meter, usable after the
+#: regular one is spent. `gpt-5.6-luna` is the model it presents as, but that
+#: slug bills to the regular allowance; only `gpt-reserve` reaches the reserve.
+LUNA_RESERVE_MODEL = "gpt-reserve"
+USAGE_LIMIT_TYPE = "usage_limit_reached"
+
 DEFAULT_MODELS = [
     "gpt-5.4",
     "gpt-5.4-mini",
     "gpt-5.4-nano",
 ]
+
+
+def _is_usage_limit_error(exception):
+    """True when Codex refused the request because an allowance is spent.
+
+    An ordinary rate limit is a different thing and should not be retried
+    against a different allowance.
+    """
+    if getattr(exception, "status_code", None) not in (None, 429):
+        return False
+    body = getattr(exception, "body", None)
+    if isinstance(body, dict):
+        error = body.get("error")
+        fields = error if isinstance(error, dict) else body
+        if USAGE_LIMIT_TYPE in (fields.get("type"), fields.get("code")):
+            return True
+    return USAGE_LIMIT_TYPE in str(exception)
 
 
 def _fetch_codex_models():
@@ -225,6 +248,14 @@ class CodexOptions(Options):
     )
     reasoning_effort: Optional[ReasoningEffortEnum] = Field(
         description="Reasoning effort level: low, medium, high, or xhigh.",
+        default=None,
+    )
+    fallback_to_reserve: Optional[bool] = Field(
+        description=(
+            "Retry once on the Luna Reserve (gpt-reserve) when the regular "
+            "usage limit has been reached. Only useful on accounts that have "
+            "a Luna Reserve."
+        ),
         default=None,
     )
 
@@ -382,6 +413,22 @@ class _SharedCodexResponses:
             }
         return kwargs
 
+    def _models_to_try(self, prompt):
+        """The model slugs to attempt, in order."""
+        models = [self.model_name]
+        if (
+            getattr(prompt.options, "fallback_to_reserve", None)
+            and self.model_name != LUNA_RESERVE_MODEL
+        ):
+            models.append(LUNA_RESERVE_MODEL)
+        return models
+
+    @staticmethod
+    def _should_retry(exception, *, produced, last):
+        # Never retry once output has been yielded: the caller has already seen
+        # part of an answer and a second attempt would duplicate it.
+        return not last and not produced and _is_usage_limit_error(exception)
+
     def _handle_event(self, event, response):
         et = getattr(event, "type", None)
         if et == "response.output_text.delta":
@@ -421,20 +468,44 @@ class CodexResponsesModel(_SharedCodexResponses, Model):
     def execute(self, prompt, stream, response, conversation):
         client = openai.OpenAI(**self._get_client_kwargs())
         kwargs = self._build_kwargs(prompt, conversation)
-        for event in client.responses.create(**kwargs):
-            delta = self._handle_event(event, response)
-            if delta is not None:
-                yield delta
+        models = self._models_to_try(prompt)
+        for index, model_name in enumerate(models):
+            produced = False
+            try:
+                for event in client.responses.create(**dict(kwargs, model=model_name)):
+                    delta = self._handle_event(event, response)
+                    if delta is not None:
+                        produced = True
+                        yield delta
+                return
+            except Exception as exception:
+                if not self._should_retry(
+                    exception, produced=produced, last=index == len(models) - 1
+                ):
+                    raise
 
 
 class AsyncCodexResponsesModel(_SharedCodexResponses, AsyncModel):
     async def execute(self, prompt, stream, response, conversation):
         client = openai.AsyncOpenAI(**self._get_client_kwargs())
         kwargs = self._build_kwargs(prompt, conversation)
-        async for event in await client.responses.create(**kwargs):
-            delta = self._handle_event(event, response)
-            if delta is not None:
-                yield delta
+        models = self._models_to_try(prompt)
+        for index, model_name in enumerate(models):
+            produced = False
+            try:
+                async for event in await client.responses.create(
+                    **dict(kwargs, model=model_name)
+                ):
+                    delta = self._handle_event(event, response)
+                    if delta is not None:
+                        produced = True
+                        yield delta
+                return
+            except Exception as exception:
+                if not self._should_retry(
+                    exception, produced=produced, last=index == len(models) - 1
+                ):
+                    raise
 
 
 def _attachment(attachment):

@@ -7,7 +7,9 @@ import pytest
 from llm_openai_via_codex import (
     BorrowKeyError,
     CodexResponsesModel,
+    LUNA_RESERVE_MODEL,
     _fetch_codex_models,
+    _is_usage_limit_error,
     DEFAULT_MODELS,
 )
 
@@ -86,6 +88,17 @@ def test_fetch_codex_models_fallback():
     assert models == DEFAULT_MODELS
 
 
+class _UsageLimitError(Exception):
+    """Shaped like the openai SDK's APIStatusError for a spent allowance."""
+
+    status_code = 429
+    body = {
+        "type": "usage_limit_reached",
+        "message": "The usage limit has been reached",
+        "plan_type": "pro",
+    }
+
+
 def _catalog(*models):
     payload = json.dumps({"models": list(models)}).encode("utf-8")
 
@@ -108,10 +121,66 @@ def test_api_supported_models_are_registered_regardless_of_visibility():
     # but is a normal, usable model.
     catalog = _catalog(
         {"slug": "gpt-5.4", "supported_in_api": True, "visibility": "list"},
-        {"slug": "gpt-reserve", "supported_in_api": True, "visibility": "hide"},
+        {"slug": LUNA_RESERVE_MODEL, "supported_in_api": True, "visibility": "hide"},
         {"slug": "not-in-api", "supported_in_api": False, "visibility": "list"},
     )
     with patch("llm_openai_via_codex.borrow_codex_key", return_value=("t", None)):
         with patch("urllib.request.urlopen", return_value=catalog):
             models = _fetch_codex_models()
-    assert models == ["gpt-5.4", "gpt-reserve"]
+    assert models == ["gpt-5.4", LUNA_RESERVE_MODEL]
+
+
+@pytest.mark.parametrize(
+    "exception,expected",
+    (
+        (_UsageLimitError(), True),
+        (
+            Exception("Error code: 429 - {'error': {'type': 'usage_limit_reached'}}"),
+            True,
+        ),
+        (
+            Exception("Error code: 429 - {'error': {'type': 'rate_limit_exceeded'}}"),
+            False,
+        ),
+        (Exception("connection reset"), False),
+    ),
+)
+def test_usage_limit_detection(exception, expected):
+    assert _is_usage_limit_error(exception) is expected
+
+
+def _prompt(**options):
+    return type("Prompt", (), {"options": type("Options", (), options)()})()
+
+
+def test_reserve_is_only_attempted_when_asked_for():
+    model = CodexResponsesModel("gpt-5.4")
+    assert model._models_to_try(_prompt(fallback_to_reserve=None)) == ["gpt-5.4"]
+    assert model._models_to_try(_prompt(fallback_to_reserve=True)) == [
+        "gpt-5.4",
+        LUNA_RESERVE_MODEL,
+    ]
+
+
+def test_reserve_is_never_retried_against_itself():
+    model = CodexResponsesModel(LUNA_RESERVE_MODEL)
+    assert model._models_to_try(_prompt(fallback_to_reserve=True)) == [
+        LUNA_RESERVE_MODEL
+    ]
+
+
+def test_retry_rules():
+    model = CodexResponsesModel("gpt-5.4")
+    limit = _UsageLimitError()
+    assert model._should_retry(limit, produced=False, last=False) is True
+    # Output already yielded: retrying would duplicate part of the answer.
+    assert model._should_retry(limit, produced=True, last=False) is False
+    # Nothing left to fall back to.
+    assert model._should_retry(limit, produced=False, last=True) is False
+    # Not a usage limit.
+    assert model._should_retry(Exception("boom"), produced=False, last=False) is False
+
+
+def test_fallback_option_is_exposed():
+    model = CodexResponsesModel("gpt-5.4")
+    assert "fallback_to_reserve" in model.Options.model_fields
