@@ -201,6 +201,7 @@ class ReasoningEffortEnum(str, Enum):
     medium = "medium"
     high = "high"
     xhigh = "xhigh"
+    max = "max"
 
 
 class CodexOptions(Options):
@@ -225,7 +226,7 @@ class CodexOptions(Options):
         default=None,
     )
     reasoning_effort: Optional[ReasoningEffortEnum] = Field(
-        description="Reasoning effort level: low, medium, high, or xhigh.",
+        description="Reasoning effort level: low, medium, high, xhigh, or max.",
         default=None,
     )
 
