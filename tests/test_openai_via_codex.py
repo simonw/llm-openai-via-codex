@@ -77,6 +77,14 @@ def test_build_kwargs_reasoning_effort():
     assert kwargs["reasoning"] == {"effort": "high"}
 
 
+def test_build_kwargs_reasoning_effort_max():
+    model = CodexResponsesModel("gpt-5.4")
+    prompt = llm.Prompt(model=model, prompt="Hello")
+    prompt.options = model.Options(reasoning_effort="max")
+    kwargs = model._build_kwargs(prompt, None)
+    assert kwargs["reasoning"] == {"effort": "max"}
+
+
 def test_fetch_codex_models_fallback():
     with patch(
         "llm_openai_via_codex.borrow_codex_key",
